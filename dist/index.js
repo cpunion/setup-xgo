@@ -5988,7 +5988,7 @@ exports["default"] = _default;
 
 /***/ }),
 
-/***/ 9811:
+/***/ 119:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -6020,7 +6020,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.parseXGoVersionFile = exports.selectVersion = exports.installXGo = void 0;
+exports.parseGopVersionFile = exports.selectVersion = exports.installGop = void 0;
 const core = __importStar(__nccwpck_require__(2186));
 const semver = __importStar(__nccwpck_require__(1383));
 const fs_1 = __importDefault(__nccwpck_require__(7147));
@@ -6028,26 +6028,27 @@ const path_1 = __importDefault(__nccwpck_require__(1017));
 const os_1 = __importDefault(__nccwpck_require__(2037));
 const child_process_1 = __nccwpck_require__(2081);
 const XGO_REPO = 'https://github.com/goplus/xgo.git';
+const XGO_MODULE = 'github.com/goplus/xgo/cmd/xgo';
 /**
  * The main function for the action.
  * @returns {Promise<void>} Resolves when the action is complete.
  */
-async function installXGo() {
+async function installGop() {
     try {
         const versionSpec = resolveVersionInput() || '';
         const tagVersions = semver.rsort(fetchTags().filter(v => semver.valid(v)));
         let version = null;
         if (!versionSpec || versionSpec === 'latest') {
             version = tagVersions[0];
-            core.warning(`No xgo-version specified, using latest version: ${version}`);
+            core.warning(`No gop-version specified, using latest version: ${version}`);
         }
         else {
             version = semver.maxSatisfying(tagVersions, versionSpec);
             if (!version) {
-                core.warning(`No xgo-version found that satisfies '${versionSpec}', trying branches...`);
+                core.warning(`No gop-version found that satisfies '${versionSpec}', trying branches...`);
                 const branchVersions = fetchBranches();
                 if (!branchVersions.includes(versionSpec)) {
-                    throw new Error(`No xgo-version found that satisfies '${versionSpec}' in branches or tags`);
+                    throw new Error(`No gop-version found that satisfies '${versionSpec}' in branches or tags`);
                 }
                 version = '';
             }
@@ -6056,19 +6057,19 @@ async function installXGo() {
         if (version) {
             core.info(`Selected version ${version} by spec ${versionSpec}`);
             checkoutVersion = `v${version}`;
-            core.setOutput('xgo-version-verified', true);
+            core.setOutput('gop-version-verified', true);
         }
         else {
             core.warning(`Unable to find a version that satisfies the version spec '${versionSpec}', trying branches...`);
             checkoutVersion = versionSpec;
-            core.setOutput('xgo-version-verified', false);
+            core.setOutput('gop-version-verified', false);
         }
         const xgoDir = cloneBranchOrTag(checkoutVersion);
         install(xgoDir);
         if (version) {
             checkVersion(version);
         }
-        core.setOutput('xgo-version', xgoVersion());
+        core.setOutput('gop-version', xgoVersion());
     }
     catch (error) {
         // Fail the workflow run if an error occurs
@@ -6076,7 +6077,7 @@ async function installXGo() {
             core.setFailed(error.message);
     }
 }
-exports.installXGo = installXGo;
+exports.installGop = installGop;
 function selectVersion(versions, versionSpec) {
     const sortedVersions = semver.rsort(versions.filter(v => semver.valid(v)));
     if (!versionSpec || versionSpec === 'latest') {
@@ -6099,16 +6100,46 @@ function cloneBranchOrTag(versionSpec) {
     return path_1.default.join(workDir, 'xgo');
 }
 function install(xgoDir) {
-    core.info(`Installing xgo ${xgoDir} ...`);
-    const bin = path_1.default.join(os_1.default.homedir(), 'bin');
-    (0, child_process_1.execSync)('go run cmd/make.go -install', {
+    core.info(`Installing xgo from ${xgoDir} ...`);
+    // Build xgo using simplified approach
+    const bin = path_1.default.join(xgoDir, 'bin');
+    if (!fs_1.default.existsSync(bin)) {
+        fs_1.default.mkdirSync(bin);
+    }
+    // Get version from git
+    const version = (0, child_process_1.execSync)('git describe --tags --always', {
+        cwd: xgoDir,
+        env: process.env
+    })
+        .toString()
+        .trim();
+    const buildDate = new Date()
+        .toISOString()
+        .replace(/[:.]/g, '-')
+        .slice(0, 19);
+    // Build with ldflags to embed defaultXGoRoot and version
+    const ldflags = [
+        `-X "github.com/goplus/xgo/env.defaultXGoRoot=${xgoDir}"`,
+        `-X "github.com/goplus/xgo/env.buildVersion=${version}"`,
+        `-X "github.com/goplus/xgo/env.buildDate=${buildDate}"`
+    ].join(' ');
+    (0, child_process_1.execSync)(`go build -o bin/xgo -trimpath -ldflags '${ldflags}' ./cmd/xgo`, {
         cwd: xgoDir,
         stdio: 'inherit',
-        env: {
-            ...process.env,
-            GOBIN: bin
-        }
+        env: process.env
     });
+    // Create gop symlink/copy
+    const xgoBin = path_1.default.join(bin, 'xgo');
+    const gopBin = path_1.default.join(bin, 'gop');
+    if (process.platform === 'win32') {
+        fs_1.default.copyFileSync(xgoBin, gopBin);
+    }
+    else {
+        if (fs_1.default.existsSync(gopBin)) {
+            fs_1.default.unlinkSync(gopBin);
+        }
+        fs_1.default.symlinkSync('xgo', gopBin);
+    }
     core.addPath(bin);
     core.info('xgo installed');
 }
@@ -6145,32 +6176,32 @@ function fetchBranches() {
     return versions;
 }
 function resolveVersionInput() {
-    let version = process.env['INPUT_XGO_VERSION'];
-    const versionFilePath = process.env['INPUT_XGO_VERSION_FILE'];
+    let version = process.env['INPUT_GOP_VERSION'];
+    const versionFilePath = process.env['INPUT_GOP_VERSION_FILE'];
     if (version && versionFilePath) {
-        core.warning('Both xgo-version and xgo-version-file inputs are specified, only xgo-version will be used');
+        core.warning('Both gop-version and gop-version-file inputs are specified, only gop-version will be used');
     }
     if (version) {
         return version;
     }
     if (versionFilePath) {
         if (!fs_1.default.existsSync(versionFilePath)) {
-            throw new Error(`The specified xgo version file at: ${versionFilePath} does not exist`);
+            throw new Error(`The specified gop version file at: ${versionFilePath} does not exist`);
         }
-        version = parseXGoVersionFile(versionFilePath);
+        version = parseGopVersionFile(versionFilePath);
     }
     return version;
 }
-function parseXGoVersionFile(versionFilePath) {
+function parseGopVersionFile(versionFilePath) {
     const contents = fs_1.default.readFileSync(versionFilePath).toString();
-    if (path_1.default.basename(versionFilePath) === 'xgo.mod' ||
-        path_1.default.basename(versionFilePath) === 'xgo.work') {
-        const match = contents.match(/^xgo (\d+(\.\d+)*)/m);
+    if (path_1.default.basename(versionFilePath) === 'gop.mod' ||
+        path_1.default.basename(versionFilePath) === 'gop.work') {
+        const match = contents.match(/^gop (\d+(\.\d+)*)/m);
         return match ? match[1] : '';
     }
     return contents.trim();
 }
-exports.parseXGoVersionFile = parseXGoVersionFile;
+exports.parseGopVersionFile = parseGopVersionFile;
 
 
 /***/ }),
@@ -6319,9 +6350,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 /**
  * The entrypoint for the action.
  */
-const install_xgo_1 = __nccwpck_require__(9811);
+const install_gop_1 = __nccwpck_require__(119);
 async function run() {
-    await (0, install_xgo_1.installXGo)();
+    await (0, install_gop_1.installGop)();
 }
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
 run();
