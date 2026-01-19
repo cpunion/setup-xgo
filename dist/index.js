@@ -6027,7 +6027,8 @@ const fs_1 = __importDefault(__nccwpck_require__(7147));
 const path_1 = __importDefault(__nccwpck_require__(1017));
 const os_1 = __importDefault(__nccwpck_require__(2037));
 const child_process_1 = __nccwpck_require__(2081);
-const GOPLUS_REPO = 'https://github.com/goplus/gop.git';
+const XGO_REPO = 'https://github.com/goplus/xgo.git';
+const XGO_MODULE = 'github.com/goplus/xgo/cmd/xgo';
 /**
  * The main function for the action.
  * @returns {Promise<void>} Resolves when the action is complete.
@@ -6052,23 +6053,22 @@ async function installGop() {
                 version = '';
             }
         }
-        let checkoutVersion = '';
+        let installVersion = '';
         if (version) {
             core.info(`Selected version ${version} by spec ${versionSpec}`);
-            checkoutVersion = `v${version}`;
+            installVersion = `v${version}`;
             core.setOutput('gop-version-verified', true);
         }
         else {
             core.warning(`Unable to find a version that satisfies the version spec '${versionSpec}', trying branches...`);
-            checkoutVersion = versionSpec;
+            installVersion = versionSpec;
             core.setOutput('gop-version-verified', false);
         }
-        const gopDir = cloneBranchOrTag(checkoutVersion);
-        install(gopDir);
+        install(installVersion);
         if (version) {
             checkVersion(version);
         }
-        core.setOutput('gop-version', gopVersion());
+        core.setOutput('gop-version', xgoVersion());
     }
     catch (error) {
         // Fail the workflow run if an error occurs
@@ -6085,24 +6085,11 @@ function selectVersion(versions, versionSpec) {
     return semver.maxSatisfying(sortedVersions, versionSpec);
 }
 exports.selectVersion = selectVersion;
-function cloneBranchOrTag(versionSpec) {
-    // git clone https://github.com/goplus/gop.git with tag $versionSpec to $HOME/workdir/gop
-    const workDir = path_1.default.join(os_1.default.homedir(), 'workdir');
-    if (fs_1.default.existsSync(workDir)) {
-        fs_1.default.rmSync(workDir, { recursive: true });
-    }
-    fs_1.default.mkdirSync(workDir);
-    core.info(`Cloning gop ${versionSpec} to ${workDir} ...`);
-    const cmd = `git clone --depth 1 --branch ${versionSpec} ${GOPLUS_REPO}`;
-    (0, child_process_1.execSync)(cmd, { cwd: workDir, stdio: 'inherit' });
-    core.info('gop cloned');
-    return path_1.default.join(workDir, 'gop');
-}
-function install(gopDir) {
-    core.info(`Installing gop ${gopDir} ...`);
+function install(versionSpec) {
+    const version = versionSpec || 'latest';
+    core.info(`Installing xgo ${version} ...`);
     const bin = path_1.default.join(os_1.default.homedir(), 'bin');
-    (0, child_process_1.execSync)('go run cmd/make.go -install', {
-        cwd: gopDir,
+    (0, child_process_1.execSync)(`go install ${XGO_MODULE}@${version}`, {
         stdio: 'inherit',
         env: {
             ...process.env,
@@ -6110,23 +6097,23 @@ function install(gopDir) {
         }
     });
     core.addPath(bin);
-    core.info('gop installed');
+    core.info('xgo installed');
 }
 function checkVersion(versionSpec) {
-    core.info(`Testing gop ${versionSpec} ...`);
-    const actualVersion = gopVersion();
+    core.info(`Testing xgo ${versionSpec} ...`);
+    const actualVersion = xgoVersion();
     if (actualVersion !== versionSpec) {
-        throw new Error(`Installed gop version ${actualVersion} does not match expected version ${versionSpec}`);
+        throw new Error(`Installed xgo version ${actualVersion} does not match expected version ${versionSpec}`);
     }
-    core.info(`Installed gop version ${actualVersion}`);
+    core.info(`Installed xgo version ${actualVersion}`);
     return actualVersion;
 }
-function gopVersion() {
-    const out = (0, child_process_1.execSync)('gop env GOPVERSION', { env: process.env });
+function xgoVersion() {
+    const out = (0, child_process_1.execSync)('xgo env XGOVERSION', { env: process.env });
     return out.toString().trim().replace(/^v/, '');
 }
 function fetchTags() {
-    const cmd = `git -c versionsort.suffix=- ls-remote --tags --sort=v:refname ${GOPLUS_REPO}`;
+    const cmd = `git -c versionsort.suffix=- ls-remote --tags --sort=v:refname ${XGO_REPO}`;
     const out = (0, child_process_1.execSync)(cmd).toString();
     const versions = out
         .split('\n')
@@ -6136,7 +6123,7 @@ function fetchTags() {
     return versions;
 }
 function fetchBranches() {
-    const cmd = `git -c versionsort.suffix=- ls-remote --heads --sort=v:refname ${GOPLUS_REPO}`;
+    const cmd = `git -c versionsort.suffix=- ls-remote --heads --sort=v:refname ${XGO_REPO}`;
     const out = (0, child_process_1.execSync)(cmd).toString();
     const versions = out
         .split('\n')

@@ -5,7 +5,8 @@ import path from 'path'
 import os from 'os'
 import { execSync } from 'child_process'
 
-const GOPLUS_REPO = 'https://github.com/goplus/gop.git'
+const XGO_REPO = 'https://github.com/goplus/xgo.git'
+const XGO_MODULE = 'github.com/goplus/xgo/cmd/xgo'
 
 /**
  * The main function for the action.
@@ -35,24 +36,23 @@ export async function installGop(): Promise<void> {
       }
     }
 
-    let checkoutVersion = ''
+    let installVersion = ''
     if (version) {
       core.info(`Selected version ${version} by spec ${versionSpec}`)
-      checkoutVersion = `v${version}`
+      installVersion = `v${version}`
       core.setOutput('gop-version-verified', true)
     } else {
       core.warning(
         `Unable to find a version that satisfies the version spec '${versionSpec}', trying branches...`
       )
-      checkoutVersion = versionSpec
+      installVersion = versionSpec
       core.setOutput('gop-version-verified', false)
     }
-    const gopDir = cloneBranchOrTag(checkoutVersion)
-    install(gopDir)
+    install(installVersion)
     if (version) {
       checkVersion(version)
     }
-    core.setOutput('gop-version', gopVersion())
+    core.setOutput('gop-version', xgoVersion())
   } catch (error) {
     // Fail the workflow run if an error occurs
     if (error instanceof Error) core.setFailed(error.message)
@@ -70,25 +70,11 @@ export function selectVersion(
   return semver.maxSatisfying(sortedVersions, versionSpec)
 }
 
-function cloneBranchOrTag(versionSpec: string): string {
-  // git clone https://github.com/goplus/gop.git with tag $versionSpec to $HOME/workdir/gop
-  const workDir = path.join(os.homedir(), 'workdir')
-  if (fs.existsSync(workDir)) {
-    fs.rmSync(workDir, { recursive: true })
-  }
-  fs.mkdirSync(workDir)
-  core.info(`Cloning gop ${versionSpec} to ${workDir} ...`)
-  const cmd = `git clone --depth 1 --branch ${versionSpec} ${GOPLUS_REPO}`
-  execSync(cmd, { cwd: workDir, stdio: 'inherit' })
-  core.info('gop cloned')
-  return path.join(workDir, 'gop')
-}
-
-function install(gopDir: string): void {
-  core.info(`Installing gop ${gopDir} ...`)
+function install(versionSpec: string): void {
+  const version = versionSpec || 'latest'
+  core.info(`Installing xgo ${version} ...`)
   const bin = path.join(os.homedir(), 'bin')
-  execSync('go run cmd/make.go -install', {
-    cwd: gopDir,
+  execSync(`go install ${XGO_MODULE}@${version}`, {
     stdio: 'inherit',
     env: {
       ...process.env,
@@ -96,28 +82,28 @@ function install(gopDir: string): void {
     }
   })
   core.addPath(bin)
-  core.info('gop installed')
+  core.info('xgo installed')
 }
 
 function checkVersion(versionSpec: string): string {
-  core.info(`Testing gop ${versionSpec} ...`)
-  const actualVersion = gopVersion()
+  core.info(`Testing xgo ${versionSpec} ...`)
+  const actualVersion = xgoVersion()
   if (actualVersion !== versionSpec) {
     throw new Error(
-      `Installed gop version ${actualVersion} does not match expected version ${versionSpec}`
+      `Installed xgo version ${actualVersion} does not match expected version ${versionSpec}`
     )
   }
-  core.info(`Installed gop version ${actualVersion}`)
+  core.info(`Installed xgo version ${actualVersion}`)
   return actualVersion
 }
 
-function gopVersion(): string {
-  const out = execSync('gop env GOPVERSION', { env: process.env })
+function xgoVersion(): string {
+  const out = execSync('xgo env XGOVERSION', { env: process.env })
   return out.toString().trim().replace(/^v/, '')
 }
 
 function fetchTags(): string[] {
-  const cmd = `git -c versionsort.suffix=- ls-remote --tags --sort=v:refname ${GOPLUS_REPO}`
+  const cmd = `git -c versionsort.suffix=- ls-remote --tags --sort=v:refname ${XGO_REPO}`
   const out = execSync(cmd).toString()
   const versions = out
     .split('\n')
@@ -128,7 +114,7 @@ function fetchTags(): string[] {
 }
 
 function fetchBranches(): string[] {
-  const cmd = `git -c versionsort.suffix=- ls-remote --heads --sort=v:refname ${GOPLUS_REPO}`
+  const cmd = `git -c versionsort.suffix=- ls-remote --heads --sort=v:refname ${XGO_REPO}`
   const out = execSync(cmd).toString()
   const versions = out
     .split('\n')
