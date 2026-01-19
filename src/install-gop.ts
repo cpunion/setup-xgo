@@ -36,19 +36,20 @@ export async function installGop(): Promise<void> {
       }
     }
 
-    let installVersion = ''
+    let checkoutVersion = ''
     if (version) {
       core.info(`Selected version ${version} by spec ${versionSpec}`)
-      installVersion = `v${version}`
+      checkoutVersion = `v${version}`
       core.setOutput('gop-version-verified', true)
     } else {
       core.warning(
         `Unable to find a version that satisfies the version spec '${versionSpec}', trying branches...`
       )
-      installVersion = versionSpec
+      checkoutVersion = versionSpec
       core.setOutput('gop-version-verified', false)
     }
-    install(installVersion)
+    const xgoDir = cloneBranchOrTag(checkoutVersion)
+    install(xgoDir)
     if (version) {
       checkVersion(version)
     }
@@ -70,17 +71,67 @@ export function selectVersion(
   return semver.maxSatisfying(sortedVersions, versionSpec)
 }
 
-function install(versionSpec: string): void {
-  const version = versionSpec || 'latest'
-  core.info(`Installing xgo ${version} ...`)
-  const bin = path.join(os.homedir(), 'bin')
-  execSync(`go install ${XGO_MODULE}@${version}`, {
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      GOBIN: bin
-    }
+function cloneBranchOrTag(versionSpec: string): string {
+  // git clone https://github.com/goplus/xgo.git with tag $versionSpec to $HOME/workdir/xgo
+  const workDir = path.join(os.homedir(), 'workdir')
+  if (fs.existsSync(workDir)) {
+    fs.rmSync(workDir, { recursive: true })
+  }
+  fs.mkdirSync(workDir)
+  core.info(`Cloning xgo ${versionSpec} to ${workDir} ...`)
+  const cmd = `git clone --depth 1 --branch ${versionSpec} ${XGO_REPO}`
+  execSync(cmd, { cwd: workDir, stdio: 'inherit' })
+  core.info('xgo cloned')
+  return path.join(workDir, 'xgo')
+}
+
+function install(xgoDir: string): void {
+  core.info(`Installing xgo from ${xgoDir} ...`)
+
+  // Build xgo using simplified approach
+  const bin = path.join(xgoDir, 'bin')
+  if (!fs.existsSync(bin)) {
+    fs.mkdirSync(bin)
+  }
+
+  // Get version from git
+  const version = execSync('git describe --tags --always', {
+    cwd: xgoDir,
+    env: process.env
   })
+    .toString()
+    .trim()
+
+  const buildDate = new Date()
+    .toISOString()
+    .replace(/[:.]/g, '-')
+    .slice(0, 19)
+
+  // Build with ldflags to embed defaultXGoRoot and version
+  const ldflags = [
+    `-X "github.com/goplus/xgo/env.defaultXGoRoot=${xgoDir}"`,
+    `-X "github.com/goplus/xgo/env.buildVersion=${version}"`,
+    `-X "github.com/goplus/xgo/env.buildDate=${buildDate}"`
+  ].join(' ')
+
+  execSync(`go build -o bin/xgo -trimpath -ldflags '${ldflags}' ./cmd/xgo`, {
+    cwd: xgoDir,
+    stdio: 'inherit',
+    env: process.env
+  })
+
+  // Create gop symlink/copy
+  const xgoBin = path.join(bin, 'xgo')
+  const gopBin = path.join(bin, 'gop')
+  if (process.platform === 'win32') {
+    fs.copyFileSync(xgoBin, gopBin)
+  } else {
+    if (fs.existsSync(gopBin)) {
+      fs.unlinkSync(gopBin)
+    }
+    fs.symlinkSync('xgo', gopBin)
+  }
+
   core.addPath(bin)
   core.info('xgo installed')
 }

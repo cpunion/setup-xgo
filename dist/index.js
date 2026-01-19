@@ -6053,18 +6053,19 @@ async function installGop() {
                 version = '';
             }
         }
-        let installVersion = '';
+        let checkoutVersion = '';
         if (version) {
             core.info(`Selected version ${version} by spec ${versionSpec}`);
-            installVersion = `v${version}`;
+            checkoutVersion = `v${version}`;
             core.setOutput('gop-version-verified', true);
         }
         else {
             core.warning(`Unable to find a version that satisfies the version spec '${versionSpec}', trying branches...`);
-            installVersion = versionSpec;
+            checkoutVersion = versionSpec;
             core.setOutput('gop-version-verified', false);
         }
-        install(installVersion);
+        const xgoDir = cloneBranchOrTag(checkoutVersion);
+        install(xgoDir);
         if (version) {
             checkVersion(version);
         }
@@ -6085,17 +6086,60 @@ function selectVersion(versions, versionSpec) {
     return semver.maxSatisfying(sortedVersions, versionSpec);
 }
 exports.selectVersion = selectVersion;
-function install(versionSpec) {
-    const version = versionSpec || 'latest';
-    core.info(`Installing xgo ${version} ...`);
-    const bin = path_1.default.join(os_1.default.homedir(), 'bin');
-    (0, child_process_1.execSync)(`go install ${XGO_MODULE}@${version}`, {
+function cloneBranchOrTag(versionSpec) {
+    // git clone https://github.com/goplus/xgo.git with tag $versionSpec to $HOME/workdir/xgo
+    const workDir = path_1.default.join(os_1.default.homedir(), 'workdir');
+    if (fs_1.default.existsSync(workDir)) {
+        fs_1.default.rmSync(workDir, { recursive: true });
+    }
+    fs_1.default.mkdirSync(workDir);
+    core.info(`Cloning xgo ${versionSpec} to ${workDir} ...`);
+    const cmd = `git clone --depth 1 --branch ${versionSpec} ${XGO_REPO}`;
+    (0, child_process_1.execSync)(cmd, { cwd: workDir, stdio: 'inherit' });
+    core.info('xgo cloned');
+    return path_1.default.join(workDir, 'xgo');
+}
+function install(xgoDir) {
+    core.info(`Installing xgo from ${xgoDir} ...`);
+    // Build xgo using simplified approach
+    const bin = path_1.default.join(xgoDir, 'bin');
+    if (!fs_1.default.existsSync(bin)) {
+        fs_1.default.mkdirSync(bin);
+    }
+    // Get version from git
+    const version = (0, child_process_1.execSync)('git describe --tags --always', {
+        cwd: xgoDir,
+        env: process.env
+    })
+        .toString()
+        .trim();
+    const buildDate = new Date()
+        .toISOString()
+        .replace(/[:.]/g, '-')
+        .slice(0, 19);
+    // Build with ldflags to embed defaultXGoRoot and version
+    const ldflags = [
+        `-X "github.com/goplus/xgo/env.defaultXGoRoot=${xgoDir}"`,
+        `-X "github.com/goplus/xgo/env.buildVersion=${version}"`,
+        `-X "github.com/goplus/xgo/env.buildDate=${buildDate}"`
+    ].join(' ');
+    (0, child_process_1.execSync)(`go build -o bin/xgo -trimpath -ldflags '${ldflags}' ./cmd/xgo`, {
+        cwd: xgoDir,
         stdio: 'inherit',
-        env: {
-            ...process.env,
-            GOBIN: bin
-        }
+        env: process.env
     });
+    // Create gop symlink/copy
+    const xgoBin = path_1.default.join(bin, 'xgo');
+    const gopBin = path_1.default.join(bin, 'gop');
+    if (process.platform === 'win32') {
+        fs_1.default.copyFileSync(xgoBin, gopBin);
+    }
+    else {
+        if (fs_1.default.existsSync(gopBin)) {
+            fs_1.default.unlinkSync(gopBin);
+        }
+        fs_1.default.symlinkSync('xgo', gopBin);
+    }
     core.addPath(bin);
     core.info('xgo installed');
 }
